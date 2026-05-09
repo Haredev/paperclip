@@ -78,6 +78,7 @@ import {
 } from "../lib/join-request-dedupe.js";
 import { assertAuthenticated, assertCompanyAccess } from "./authz.js";
 import {
+  autoClaimBoardIfPending,
   claimBoardOwnership,
   inspectBoardClaimChallenge
 } from "../board-claim.js";
@@ -3625,6 +3626,10 @@ export function accessRoutes(
           throw conflict("Someone else has already claimed this instance");
         }
         const updatedInvite = claimed.value ?? invite;
+        // Custom: also process any pending board-claim challenge so the user
+        // gets full company ownership immediately. Upstream's
+        // claimFirstInstanceAdmin already updated the invite atomically above.
+        await autoClaimBoardIfPending(db, userId);
         res.status(202).json({
           inviteId: updatedInvite.id,
           inviteType: updatedInvite.inviteType,

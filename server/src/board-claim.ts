@@ -159,3 +159,15 @@ export async function claimBoardOwnership(
 
   return { status: "claimed", claimedByUserId: opts.userId };
 }
+
+export async function autoClaimBoardIfPending(db: Db, userId: string): Promise<boolean> {
+  if (!activeChallenge || activeChallenge.claimedAt || activeChallenge.expiresAt.getTime() <= Date.now()) {
+    return false;
+  }
+  const result = await claimBoardOwnership(db, {
+    token: activeChallenge.token,
+    code: activeChallenge.code,
+    userId,
+  });
+  return result.status === "claimed";
+}
