@@ -249,7 +249,16 @@ export function InviteLandingPage() {
 
   const companiesQuery = useQuery({
     queryKey: queryKeys.companies.all,
-    queryFn: () => companiesApi.list(),
+    queryFn: async () => {
+      try {
+        return { companies: await companiesApi.list(), unauthorized: false };
+      } catch (err) {
+        if (err instanceof Error && "status" in err && (err as { status: number }).status === 401) {
+          return { companies: [] as Awaited<ReturnType<typeof companiesApi.list>>, unauthorized: true };
+        }
+        throw err;
+      }
+    },
     enabled: !!sessionQuery.data && !!inviteQuery.data?.companyId,
     retry: false,
   });
@@ -263,8 +272,8 @@ export function InviteLandingPage() {
   }, [token]);
 
   useEffect(() => {
-    if (!companiesQuery.data || !inviteQuery.data?.companyId) return;
-    const isMember = companiesQuery.data.some(
+    if (!companiesQuery.data?.companies || !inviteQuery.data?.companyId) return;
+    const isMember = companiesQuery.data.companies.some(
       (c) => c.id === inviteQuery.data!.companyId
     );
     if (isMember) {
@@ -281,7 +290,7 @@ export function InviteLandingPage() {
   const isCurrentMember =
     Boolean(invite?.companyId) &&
     Boolean(
-      companiesQuery.data?.some((company) => company.id === invite?.companyId),
+      companiesQuery.data?.companies.some((company) => company.id === invite?.companyId),
     );
   const companyName = invite?.companyName?.trim() || null;
   const companyDisplayName = companyName || "this Paperclip company";
@@ -375,9 +384,15 @@ export function InviteLandingPage() {
       setAuthFeedback(null);
       rememberPendingInviteToken(token);
       await queryClient.invalidateQueries({ queryKey: queryKeys.auth.session });
-      const companies = await queryClient.fetchQuery({
+      const { companies } = await queryClient.fetchQuery({
         queryKey: queryKeys.companies.all,
-        queryFn: () => companiesApi.list(),
+        queryFn: async () => {
+          try {
+            return { companies: await companiesApi.list(), unauthorized: false };
+          } catch {
+            return { companies: [] as Awaited<ReturnType<typeof companiesApi.list>>, unauthorized: false };
+          }
+        },
         retry: false,
       });
 
