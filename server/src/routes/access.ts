@@ -76,6 +76,7 @@ import {
 } from "../lib/join-request-dedupe.js";
 import { assertAuthenticated, assertCompanyAccess } from "./authz.js";
 import {
+  autoClaimBoardIfPending,
   claimBoardOwnership,
   inspectBoardClaimChallenge
 } from "../board-claim.js";
@@ -3249,6 +3250,7 @@ export function accessRoutes(
         if (!existingAdmin) {
           await access.promoteInstanceAdmin(userId);
         }
+        await autoClaimBoardIfPending(db, userId);
         const updatedInvite = await db
           .update(invites)
           .set({ acceptedAt: new Date(), updatedAt: new Date() })
