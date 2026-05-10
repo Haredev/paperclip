@@ -1,0 +1,77 @@
+name: Publish to GitHub Registry
+
+on:
+  push:
+    branches:
+      - master
+
+concurrency:
+  group: github-registry-publish
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+          scope: '@haredev'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build CLI bundle
+        run: ./scripts/build-npm.sh --skip-checks --skip-typecheck
+
+      - name: Set package metadata for GitHub Registry
+        run: |
+          BASE_VERSION=$(node --input-type=module -e "
+            import { readFileSync } from 'fs';
+            process.stdout.write(JSON.parse(readFileSync('./cli/package.dev.json', 'utf8')).version);
+          ")
+          SHORT_SHA="${GITHUB_SHA:0:8}"
+          PUBLISH_VERSION="${BASE_VERSION}-sha.${SHORT_SHA}"
+          PUBLISH_VERSION="${PUBLISH_VERSION}" node --input-type=module -e "
+            import { readFileSync, writeFileSync } from 'fs';
+            const pkg = JSON.parse(readFileSync('./cli/package.json', 'utf8'));
+            pkg.name = '@haredev/paperclipai';
+            pkg.version = process.env.PUBLISH_VERSION;
+            pkg.publishConfig = { registry: 'https://npm.pkg.github.com' };
+            writeFileSync('./cli/package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          echo "PUBLISH_VERSION=${PUBLISH_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Publish to GitHub Registry
+        run: cd cli && npm publish --no-git-checks --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Job summary
+        run: |
+          echo "### Published to GitHub Registry" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Package:** \`@haredev/paperclipai@${PUBLISH_VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "To install, add to \`.npmrc\`:" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "@haredev:registry=https://npm.pkg.github.com" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Then: \`npm install @haredev/paperclipai\`" >> "$GITHUB_STEP_SUMMARY"
