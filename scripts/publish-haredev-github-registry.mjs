@@ -119,7 +119,7 @@ function publishOne(paperclipName) {
     const original = readJson(pkgPath);
     const publishable = makePublishablePackageJson(original, paperclipName);
     writeFileSync(pkgPath, JSON.stringify(publishable, null, 2) + "\n");
-    execSync("npm publish --access public", { stdio: "inherit", cwd: dir, env: process.env });
+    execSync("npm publish --access public --tag dev", { stdio: "inherit", cwd: dir, env: process.env });
   } finally {
     copyFileSync(backup, pkgPath);
     try {
