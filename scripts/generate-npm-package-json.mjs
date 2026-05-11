@@ -10,6 +10,11 @@
  *
  * Reads from cli/package.dev.json if it exists (build already ran),
  * otherwise from cli/package.json.
+ *
+ * Optional: PAPERCLIP_SERVER_NPM_SPECIFIER — when set (e.g. in CI),
+ * overrides the @paperclipai/server dependency so installs resolve a
+ * fork-published tarball via npm package alias, e.g.
+ * npm:@haredev/paperclip-server@0.3.1-sha.abcdef12
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -69,6 +74,11 @@ for (const pkgPath of workspacePaths) {
   for (const [name, version] of Object.entries(optDeps)) {
     allOptionalDeps[name] = version;
   }
+}
+
+const serverSpecifier = process.env.PAPERCLIP_SERVER_NPM_SPECIFIER?.trim();
+if (serverSpecifier) {
+  allDeps["@paperclipai/server"] = serverSpecifier;
 }
 
 // Sort alphabetically
