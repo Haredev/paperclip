@@ -32,24 +32,34 @@ jobs:
         with:
           node-version: 24
           registry-url: https://npm.pkg.github.com
-          scope: '@haredev'
+          scope: "@haredev"
           cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
+
+      - name: Compute publish version and server alias
+        run: |
+          BASE_VERSION=$(node --input-type=module -e "
+            import { readFileSync } from 'fs';
+            process.stdout.write(JSON.parse(readFileSync('./cli/package.json', 'utf8')).version);
+          ")
+          SHORT_SHA="${GITHUB_SHA:0:8}"
+          PUBLISH_VERSION="${BASE_VERSION}-sha.${SHORT_SHA}"
+          echo "PUBLISH_VERSION=${PUBLISH_VERSION}" >> "$GITHUB_ENV"
+          echo "PAPERCLIP_SERVER_NPM_SPECIFIER=npm:@haredev/paperclip-server@${PUBLISH_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Publish server stack (@haredev/paperclip-*)
+        run: node scripts/publish-haredev-github-registry.mjs
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build CLI bundle
         run: ./scripts/build-npm.sh --skip-checks --skip-typecheck
 
       - name: Set package metadata for GitHub Registry
         run: |
-          BASE_VERSION=$(node --input-type=module -e "
-            import { readFileSync } from 'fs';
-            process.stdout.write(JSON.parse(readFileSync('./cli/package.dev.json', 'utf8')).version);
-          ")
-          SHORT_SHA="${GITHUB_SHA:0:8}"
-          PUBLISH_VERSION="${BASE_VERSION}-sha.${SHORT_SHA}"
-          PUBLISH_VERSION="${PUBLISH_VERSION}" node --input-type=module -e "
+          node --input-type=module -e "
             import { readFileSync, writeFileSync } from 'fs';
             const pkg = JSON.parse(readFileSync('./cli/package.json', 'utf8'));
             pkg.name = '@haredev/paperclipai';
@@ -57,9 +67,8 @@ jobs:
             pkg.publishConfig = { registry: 'https://npm.pkg.github.com' };
             writeFileSync('./cli/package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
-          echo "PUBLISH_VERSION=${PUBLISH_VERSION}" >> "$GITHUB_ENV"
 
-      - name: Publish to GitHub Registry
+      - name: Publish CLI to GitHub Registry
         run: cd cli && npm publish --tag dev --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -68,7 +77,10 @@ jobs:
         run: |
           echo "### Published to GitHub Registry" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Package:** \`@haredev/paperclipai@${PUBLISH_VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "**CLI:** \`@haredev/paperclipai@${PUBLISH_VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Server (installed as \`@paperclipai/server\` via npm alias):** \`@haredev/paperclip-server@${PUBLISH_VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Board UI is shipped inside the server package (\`server/ui-dist\` from \`prepack\`)." >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "To install, add to \`.npmrc\`:" >> "$GITHUB_STEP_SUMMARY"
           echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
