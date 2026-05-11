@@ -92,6 +92,18 @@ function makePublishablePackageJson(original, paperclipName) {
   const next = { ...original };
   next.name = toHaredevName(paperclipName);
   next.version = PUBLISH_VERSION;
+
+  // Workspace package.json keeps dev-time `exports` → ./src/*.ts. npm does not
+  // reliably replace those with publishConfig when we rewrite the file for
+  // publish — flatten publishConfig into the manifest so installs resolve dist.
+  const pub = original.publishConfig && typeof original.publishConfig === "object"
+    ? original.publishConfig
+    : {};
+  if (pub.exports != null) next.exports = pub.exports;
+  if (typeof pub.main === "string") next.main = pub.main;
+  if (typeof pub.types === "string") next.types = pub.types;
+  if (typeof pub.module === "string") next.module = pub.module;
+
   next.publishConfig = { registry: REGISTRY, access: "public" };
   if (next.dependencies) next.dependencies = rewriteDeps(next.dependencies);
   if (next.optionalDependencies) next.optionalDependencies = rewriteDeps(next.optionalDependencies);
