@@ -58,4 +58,56 @@ export const projectsApi = {
   removeWorkspace: (projectId: string, workspaceId: string, companyId?: string) =>
     api.delete<ProjectWorkspace>(projectPath(projectId, companyId, `/workspaces/${encodeURIComponent(workspaceId)}`)),
   remove: (id: string, companyId?: string) => api.delete<Project>(projectPath(id, companyId)),
+  listFileWorkspaces: (projectId: string, companyId?: string) =>
+    api.get<{
+      workspaces: Array<{
+        id: string;
+        name: string;
+        cwd: string | null;
+        isPrimary: boolean;
+        sourceType: string;
+      }>;
+    }>(projectPath(projectId, companyId, "/files/workspaces")),
+  getFileTree: (
+    projectId: string,
+    params: { path?: string; workspaceId?: string; companyId?: string },
+  ) => {
+    const search = new URLSearchParams();
+    if (params.path) search.set("path", params.path);
+    if (params.workspaceId) search.set("workspaceId", params.workspaceId);
+    if (params.companyId) search.set("companyId", params.companyId);
+    const qs = search.toString();
+    return api.get<{
+      workspaceId: string;
+      workspaceName: string;
+      path: string;
+      items: Array<{ name: string; type: "directory" | "file"; viewable: boolean; ext: string }>;
+      truncated: boolean;
+    }>(
+      `/projects/${encodeURIComponent(projectId)}/files/tree${qs ? `?${qs}` : ""}`,
+    );
+  },
+  getFileContent: (
+    projectId: string,
+    params: { path: string; workspaceId?: string; companyId?: string },
+  ) => {
+    const search = new URLSearchParams({ path: params.path });
+    if (params.workspaceId) search.set("workspaceId", params.workspaceId);
+    if (params.companyId) search.set("companyId", params.companyId);
+    return api.get<{
+      workspaceId: string;
+      path: string;
+      content: string;
+      size: number;
+    }>(`/projects/${encodeURIComponent(projectId)}/files/content?${search.toString()}`);
+  },
+  fileDownloadUrl: (
+    projectId: string,
+    params: { path: string; workspaceId?: string; companyId?: string },
+  ) => {
+    const search = new URLSearchParams({ path: params.path });
+    if (params.workspaceId) search.set("workspaceId", params.workspaceId);
+    if (params.companyId) search.set("companyId", params.companyId);
+    return `/api/projects/${encodeURIComponent(projectId)}/files/download?${search.toString()}`;
+  },
 };
