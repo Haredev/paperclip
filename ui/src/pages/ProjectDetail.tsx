@@ -535,6 +535,10 @@ export function ProjectDetail() {
       navigate(`/projects/${canonicalProjectRef}/workspaces`, { replace: true });
       return;
     }
+    if (activeTab === "files") {
+      navigate(`/projects/${canonicalProjectRef}/files`, { replace: true });
+      return;
+    }
     if (activeTab === "list") {
       if (filter) {
         navigate(`/projects/${canonicalProjectRef}/issues/${filter}`, { replace: true });
@@ -683,6 +687,9 @@ export function ProjectDetail() {
     if (cachedTab === "workspaces" && !workspaceTabDecisionLoaded) {
       return <PageSkeleton variant="detail" />;
     }
+    if (cachedTab === "files") {
+      return <Navigate to={`/projects/${canonicalProjectRef}/files`} replace />;
+    }
     if (isProjectPluginTab(cachedTab)) {
       return <Navigate to={`/projects/${canonicalProjectRef}?tab=${encodeURIComponent(cachedTab)}`} replace />;
     }
@@ -718,6 +725,8 @@ export function ProjectDetail() {
       navigate(`/projects/${canonicalProjectRef}/plugin-operations`);
     } else if (tab === "configuration") {
       navigate(`/projects/${canonicalProjectRef}/configuration`);
+    } else if (tab === "files") {
+      navigate(`/projects/${canonicalProjectRef}/files`);
     } else {
       navigate(`/projects/${canonicalProjectRef}/issues`);
     }
