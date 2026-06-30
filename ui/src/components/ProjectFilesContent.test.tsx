@@ -13,6 +13,8 @@ const mockProjectsApi = vi.hoisted(() => ({
   getFileTree: vi.fn(),
   getFileContent: vi.fn(),
   fileDownloadUrl: vi.fn(),
+  fileRawUrl: vi.fn(),
+  folderDownloadUrl: vi.fn(),
 }));
 
 vi.mock("../api/projects", () => ({ projectsApi: mockProjectsApi }));
@@ -29,17 +31,49 @@ vi.mock("./ProjectFileTree", () => ({
   ProjectFileTree: ({
     onSelectFile,
   }: {
-    onSelectFile: (entry: { path: string; viewable: boolean; ext: string; name: string }) => void;
+    onSelectFile: (entry: {
+      path: string;
+      viewable: boolean;
+      viewKind: "markdown" | "text" | "image" | "html" | null;
+      ext: string;
+      name: string;
+      type: "file" | "directory";
+    }) => void;
   }) => (
-    <button
-      type="button"
-      data-testid="tree-select-md"
-      onClick={() =>
-        onSelectFile({ path: "README.md", viewable: true, ext: ".md", name: "README.md" })
-      }
-    >
-      pick-md
-    </button>
+    <>
+      <button
+        type="button"
+        data-testid="tree-select-md"
+        onClick={() =>
+          onSelectFile({
+            path: "README.md",
+            viewable: true,
+            viewKind: "markdown",
+            ext: ".md",
+            name: "README.md",
+            type: "file",
+          })
+        }
+      >
+        pick-md
+      </button>
+      <button
+        type="button"
+        data-testid="tree-select-dir"
+        onClick={() =>
+          onSelectFile({
+            path: "docs",
+            viewable: false,
+            viewKind: null,
+            ext: "",
+            name: "docs",
+            type: "directory",
+          })
+        }
+      >
+        pick-dir
+      </button>
+    </>
   ),
 }));
 
@@ -57,6 +91,16 @@ describe("ProjectFilesContent", () => {
     mockProjectsApi.fileDownloadUrl.mockImplementation(
       (projectId: string, params: { path: string; workspaceId?: string }) =>
         `/api/projects/${projectId}/files/download?path=${params.path}&workspaceId=${params.workspaceId}`,
+    );
+    mockProjectsApi.fileRawUrl.mockReset();
+    mockProjectsApi.fileRawUrl.mockImplementation(
+      (projectId: string, params: { path: string; workspaceId?: string }) =>
+        `/api/projects/${projectId}/files/raw?path=${params.path}&workspaceId=${params.workspaceId}`,
+    );
+    mockProjectsApi.folderDownloadUrl.mockReset();
+    mockProjectsApi.folderDownloadUrl.mockImplementation(
+      (projectId: string, params: { path?: string; workspaceId?: string }) =>
+        `/api/projects/${projectId}/files/download-folder?workspaceId=${params.workspaceId}`,
     );
   });
 
@@ -143,5 +187,30 @@ describe("ProjectFilesContent", () => {
     expect(downloadLink?.getAttribute("href")).toBe(
       "/api/projects/project-1/files/download?path=README.md&workspaceId=ws-1",
     );
+  });
+
+  it("selecting a folder offers a zip download of that folder", async () => {
+    mockProjectsApi.listFileWorkspaces.mockResolvedValue({
+      workspaces: [
+        { id: "ws-1", name: "main", cwd: "/tmp/a", isPrimary: true, sourceType: "local_path" },
+      ],
+    });
+    await render();
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[data-testid=tree-select-dir]")?.click();
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(container.textContent).toContain("Folder selected");
+    // No content fetch for a directory.
+    expect(mockProjectsApi.getFileContent).not.toHaveBeenCalled();
+    expect(mockProjectsApi.folderDownloadUrl).toHaveBeenCalledWith("project-1", {
+      path: "docs",
+      workspaceId: "ws-1",
+      companyId: "company-1",
+    });
   });
 });

@@ -1,8 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, FileText, File as FileIcon, FolderClosed } from "lucide-react";
-import { projectsApi } from "../api/projects";
+import {
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  FileImage,
+  Globe,
+  File as FileIcon,
+  FolderClosed,
+} from "lucide-react";
+import { projectsApi, type FileViewKind } from "../api/projects";
 import { ApiError } from "../api/client";
 import { cn } from "../lib/utils";
+
+export type SelectedFileEntry = {
+  path: string;
+  name: string;
+  ext: string;
+  type: "file" | "directory";
+  viewable: boolean;
+  viewKind: FileViewKind | null;
+};
 
 export interface ProjectFileTreeProps {
   projectId: string;
@@ -10,15 +27,25 @@ export interface ProjectFileTreeProps {
   workspaceId?: string;
   /** Currently selected path (file). When matched, the row is highlighted. */
   selectedPath: string | null;
-  onSelectFile: (entry: { path: string; viewable: boolean; ext: string; name: string }) => void;
+  onSelectFile: (entry: SelectedFileEntry) => void;
 }
 
 type Entry = {
   name: string;
   type: "directory" | "file";
   viewable: boolean;
+  viewKind: FileViewKind | null;
   ext: string;
 };
+
+function fileIconFor(viewKind: FileViewKind | null) {
+  if (viewKind === "image") return <FileImage className="h-3.5 w-3.5 text-emerald-500" />;
+  if (viewKind === "html") return <Globe className="h-3.5 w-3.5 text-orange-500" />;
+  if (viewKind === "markdown" || viewKind === "text") {
+    return <FileText className="h-3.5 w-3.5 text-blue-500" />;
+  }
+  return <FileIcon className="h-3.5 w-3.5 text-muted-foreground" />;
+}
 
 type LoadedDir = {
   state: "loading" | "loaded" | "error";
@@ -98,20 +125,45 @@ function DirectoryNode({
         const fullPath = joinPath(parentPath, entry.name);
         if (entry.type === "directory") {
           const isOpen = !!expanded[entry.name];
+          const isSelected = selectedPath === fullPath;
           return (
             <li key={entry.name}>
-              <button
-                type="button"
-                onClick={() =>
-                  setExpanded((prev) => ({ ...prev, [entry.name]: !prev[entry.name] }))
-                }
-                className="flex w-full items-center gap-1 rounded px-2 py-1 text-left hover:bg-muted/60"
-                style={{ paddingLeft: depth * 12 + 8 }}
+              <div
+                className={cn(
+                  "flex w-full items-center rounded hover:bg-muted/60",
+                  isSelected && "bg-muted",
+                )}
               >
-                {isOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                <FolderClosed className="h-3.5 w-3.5 text-muted-foreground" />
-                <span className="truncate">{entry.name}</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setExpanded((prev) => ({ ...prev, [entry.name]: !prev[entry.name] }))
+                  }
+                  className="shrink-0 rounded p-1 hover:bg-muted"
+                  title={isOpen ? "Collapse" : "Expand"}
+                  style={{ marginLeft: depth * 12 + 4 }}
+                >
+                  {isOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExpanded((prev) => ({ ...prev, [entry.name]: true }));
+                    onSelectFile({
+                      path: fullPath,
+                      name: entry.name,
+                      ext: "",
+                      viewable: false,
+                      viewKind: null,
+                      type: "directory",
+                    });
+                  }}
+                  className="flex min-w-0 flex-1 items-center gap-1 px-1 py-1 text-left"
+                >
+                  <FolderClosed className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="truncate">{entry.name}</span>
+                </button>
+              </div>
               {isOpen && (
                 <DirectoryNode
                   projectId={projectId}
@@ -132,7 +184,14 @@ function DirectoryNode({
             <button
               type="button"
               onClick={() =>
-                onSelectFile({ path: fullPath, viewable: entry.viewable, ext: entry.ext, name: entry.name })
+                onSelectFile({
+                  path: fullPath,
+                  viewable: entry.viewable,
+                  viewKind: entry.viewKind,
+                  ext: entry.ext,
+                  name: entry.name,
+                  type: "file",
+                })
               }
               className={cn(
                 "flex w-full items-center gap-1 rounded px-2 py-1 text-left hover:bg-muted/60",
@@ -140,11 +199,7 @@ function DirectoryNode({
               )}
               style={{ paddingLeft: depth * 12 + 8 + 16 }}
             >
-              {entry.viewable ? (
-                <FileText className="h-3.5 w-3.5 text-blue-500" />
-              ) : (
-                <FileIcon className="h-3.5 w-3.5 text-muted-foreground" />
-              )}
+              {fileIconFor(entry.viewKind)}
               <span className={cn("truncate", !entry.viewable && "text-muted-foreground")}>
                 {entry.name}
               </span>

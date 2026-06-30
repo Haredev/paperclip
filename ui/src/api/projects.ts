@@ -7,6 +7,8 @@ import type {
 import { api } from "./client";
 import { sanitizeWorkspaceRuntimeControlTarget } from "./workspace-runtime-control";
 
+export type FileViewKind = "markdown" | "text" | "image" | "html";
+
 function withCompanyScope(path: string, companyId?: string) {
   if (!companyId) return path;
   const separator = path.includes("?") ? "&" : "?";
@@ -66,6 +68,7 @@ export const projectsApi = {
         cwd: string | null;
         isPrimary: boolean;
         sourceType: string;
+        managed: boolean;
       }>;
     }>(projectPath(projectId, companyId, "/files/workspaces")),
   getFileTree: (
@@ -81,7 +84,13 @@ export const projectsApi = {
       workspaceId: string;
       workspaceName: string;
       path: string;
-      items: Array<{ name: string; type: "directory" | "file"; viewable: boolean; ext: string }>;
+      items: Array<{
+        name: string;
+        type: "directory" | "file";
+        viewable: boolean;
+        viewKind: FileViewKind | null;
+        ext: string;
+      }>;
       truncated: boolean;
     }>(
       `/projects/${encodeURIComponent(projectId)}/files/tree${qs ? `?${qs}` : ""}`,
@@ -98,6 +107,7 @@ export const projectsApi = {
       workspaceId: string;
       path: string;
       content: string;
+      viewKind: FileViewKind;
       size: number;
     }>(`/projects/${encodeURIComponent(projectId)}/files/content?${search.toString()}`);
   },
@@ -109,5 +119,27 @@ export const projectsApi = {
     if (params.workspaceId) search.set("workspaceId", params.workspaceId);
     if (params.companyId) search.set("companyId", params.companyId);
     return `/api/projects/${encodeURIComponent(projectId)}/files/download?${search.toString()}`;
+  },
+  // Inline render URL for images and HTML (served with the file's real content type).
+  fileRawUrl: (
+    projectId: string,
+    params: { path: string; workspaceId?: string; companyId?: string },
+  ) => {
+    const search = new URLSearchParams({ path: params.path });
+    if (params.workspaceId) search.set("workspaceId", params.workspaceId);
+    if (params.companyId) search.set("companyId", params.companyId);
+    return `/api/projects/${encodeURIComponent(projectId)}/files/raw?${search.toString()}`;
+  },
+  // Zip download URL for a folder (omit path to download the whole workspace).
+  folderDownloadUrl: (
+    projectId: string,
+    params: { path?: string; workspaceId?: string; companyId?: string },
+  ) => {
+    const search = new URLSearchParams();
+    if (params.path) search.set("path", params.path);
+    if (params.workspaceId) search.set("workspaceId", params.workspaceId);
+    if (params.companyId) search.set("companyId", params.companyId);
+    const qs = search.toString();
+    return `/api/projects/${encodeURIComponent(projectId)}/files/download-folder${qs ? `?${qs}` : ""}`;
   },
 };
