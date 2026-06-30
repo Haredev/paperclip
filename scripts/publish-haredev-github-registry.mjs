@@ -44,9 +44,12 @@ const PACKAGE_DIR = {
   "@paperclipai/adapter-cursor-cloud": "packages/adapters/cursor-cloud",
   "@paperclipai/adapter-cursor-local": "packages/adapters/cursor-local",
   "@paperclipai/adapter-gemini-local": "packages/adapters/gemini-local",
+  "@paperclipai/adapter-grok-local": "packages/adapters/grok-local",
   "@paperclipai/adapter-openclaw-gateway": "packages/adapters/openclaw-gateway",
   "@paperclipai/adapter-opencode-local": "packages/adapters/opencode-local",
   "@paperclipai/adapter-pi-local": "packages/adapters/pi-local",
+  "@paperclipai/hermes-paperclip-adapter": "packages/adapters/hermes",
+  "@paperclipai/skills-catalog": "packages/skills-catalog",
   "@paperclipai/server": "server",
 };
 
@@ -61,9 +64,12 @@ const PUBLISH_ORDER = [
   "@paperclipai/adapter-cursor-cloud",
   "@paperclipai/adapter-cursor-local",
   "@paperclipai/adapter-gemini-local",
+  "@paperclipai/adapter-grok-local",
   "@paperclipai/adapter-openclaw-gateway",
   "@paperclipai/adapter-opencode-local",
   "@paperclipai/adapter-pi-local",
+  "@paperclipai/hermes-paperclip-adapter",
+  "@paperclipai/skills-catalog",
   "@paperclipai/server",
 ];
 
