@@ -39,6 +39,9 @@ import {
   isUuidSecretRef,
   readConfigValueAtPath,
 } from "./json-schema-secret-refs.js";
+// TEMPORARY (REVERT-ME): used only by the local single-tenant secret-ref patch
+// in resolve() below. Remove this import when that patch is removed.
+import { secretService } from "./secrets.js";
 
 export const PLUGIN_SECRET_REFS_DISABLED_MESSAGE =
   "Plugin secret references are disabled until company-scoped plugin config lands";
@@ -199,7 +202,7 @@ function createRateLimiter(maxAttempts: number, windowMs: number) {
 export function createPluginSecretsHandler(
   options: PluginSecretsHandlerOptions,
 ): PluginSecretsService {
-  const { pluginId } = options;
+  const { db, pluginId } = options;
 
   // Rate limit: max 30 resolution attempts per plugin per minute
   const rateLimiter = createRateLimiter(30, 60_000);
@@ -230,9 +233,33 @@ export function createPluginSecretsHandler(
         throw invalidSecretRef(trimmedRef);
       }
 
-      // Fail closed until plugin config and worker runtime both carry an
-      // explicit company scope for secret bindings and resolution.
-      throw new Error(PLUGIN_SECRET_REFS_DISABLED_MESSAGE);
+      // =====================================================================
+      // TEMPORARY LOCAL PATCH — REVERT BEFORE MERGING / PULLING UPSTREAM
+      // ---------------------------------------------------------------------
+      // Upstream intentionally fails closed here until "company-scoped plugin
+      // config" lands (see PLUGIN_SECRET_REFS_DISABLED_MESSAGE). That left
+      // plugins that require a `*Ref` secret (e.g. paperclip-plugin-telegram)
+      // unusable on this build.
+      //
+      // For our SINGLE-TENANT local instance we re-enable resolution by looking
+      // up the secret's owning company and delegating to the existing secret
+      // service (ephemeral, board-only access path — no persistent binding).
+      //
+      // ⚠️  DELETE this whole block and restore the original line:
+      //        throw new Error(PLUGIN_SECRET_REFS_DISABLED_MESSAGE);
+      //     once upstream ships real company-scoped plugin secret resolution.
+      //     This branch (temp/REVERTME-enable-plugin-secret-refs) exists only
+      //     to be dropped. Do NOT carry it forward.
+      // =====================================================================
+      const secrets = secretService(db);
+      const secretRow = await secrets.getById(trimmedRef);
+      if (!secretRow) {
+        throw invalidSecretRef(trimmedRef);
+      }
+      // Resolve with NO binding/access context (undefined) so the standard
+      // resolver skips binding enforcement and access-actor checks. This is
+      // acceptable ONLY because this is a single-tenant local instance.
+      return secrets.resolveSecretValue(secretRow.companyId, trimmedRef, "latest");
     },
   };
 }

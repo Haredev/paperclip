@@ -2201,11 +2201,27 @@ export function pluginRoutes(
     }
 
     try {
-      const secretRefsByPath = extractSecretRefPathsFromConfig(body.configJson, schema);
-      if (secretRefsByPath.size > 0) {
-        res.status(422).json({ error: PLUGIN_SECRET_REFS_DISABLED_MESSAGE });
-        return;
-      }
+      // ===================================================================
+      // TEMPORARY LOCAL PATCH — REVERT BEFORE MERGING / PULLING UPSTREAM
+      // -------------------------------------------------------------------
+      // Upstream rejects saving any plugin config that contains a secret
+      // `*Ref` until "company-scoped plugin config" lands. That blocks
+      // plugins requiring a token ref (e.g. paperclip-plugin-telegram) from
+      // being configured at all. For our SINGLE-TENANT local instance we
+      // allow it; the matching runtime resolver patch lives in
+      // services/plugin-secrets-handler.ts (resolve()).
+      //
+      // ⚠️  RESTORE the original rejection (kept below, commented) and delete
+      //     this block once upstream ships real company-scoped plugin secret
+      //     resolution. Branch temp/REVERTME-enable-plugin-secret-refs exists
+      //     only to be dropped.
+      //
+      //   const secretRefsByPath = extractSecretRefPathsFromConfig(body.configJson, schema);
+      //   if (secretRefsByPath.size > 0) {
+      //     res.status(422).json({ error: PLUGIN_SECRET_REFS_DISABLED_MESSAGE });
+      //     return;
+      //   }
+      // ===================================================================
 
       const result = await registry.upsertConfig(plugin.id, {
         configJson: body.configJson,
