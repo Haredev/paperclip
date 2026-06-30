@@ -14,6 +14,15 @@ vi.mock("../board-claim.js", () => ({
   claimBoardOwnership: vi.fn(),
 }));
 
+// Upstream replaced the old accessService.promoteInstanceAdmin flow with
+// claimFirstInstanceAdmin (which runs inside db.transaction). Mock it so the
+// route can run against the lightweight db stub below.
+const claimFirstInstanceAdminMock = vi.fn();
+
+vi.mock("../first-admin-claim.js", () => ({
+  claimFirstInstanceAdmin: (...args: unknown[]) => claimFirstInstanceAdminMock(...args),
+}));
+
 const isInstanceAdminMock = vi.fn();
 const promoteInstanceAdminMock = vi.fn();
 
@@ -120,6 +129,12 @@ describe("POST /invites/:token/accept — bootstrap_ceo", () => {
     isInstanceAdminMock.mockResolvedValue(false);
     promoteInstanceAdminMock.mockResolvedValue(undefined);
     autoClaimBoardIfPendingMock.mockResolvedValue(true);
+    // Default: this user successfully claims the (unclaimed) instance admin
+    // slot, running the route's onClaim callback against the db stub.
+    claimFirstInstanceAdminMock.mockImplementation(async (db: any, input: any) => {
+      const value = input.onClaim ? await input.onClaim(db) : null;
+      return { status: "claimed", userId: input.userId, value };
+    });
   });
 
   it("calls autoClaimBoardIfPending with the signed-in userId after accepting", async () => {
@@ -135,7 +150,7 @@ describe("POST /invites/:token/accept — bootstrap_ceo", () => {
     expect(autoClaimBoardIfPendingMock).toHaveBeenCalledWith(db, "user-bootstrap-1");
   });
 
-  it("promotes to instance_admin before auto-claiming", async () => {
+  it("claims the first instance admin before auto-claiming the board", async () => {
     const { db } = createDbStub();
     const app = createApp(db, "user-bootstrap-1");
 
@@ -143,14 +158,21 @@ describe("POST /invites/:token/accept — bootstrap_ceo", () => {
       .post("/api/invites/pcp_bootstrap_test/accept")
       .send({ requestType: "human" });
 
-    expect(promoteInstanceAdminMock).toHaveBeenCalledWith("user-bootstrap-1");
-    const promoteOrder = promoteInstanceAdminMock.mock.invocationCallOrder[0];
+    expect(claimFirstInstanceAdminMock).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({ userId: "user-bootstrap-1" }),
+    );
+    const adminOrder = claimFirstInstanceAdminMock.mock.invocationCallOrder[0];
     const claimOrder = autoClaimBoardIfPendingMock.mock.invocationCallOrder[0];
-    expect(promoteOrder).toBeLessThan(claimOrder);
+    expect(adminOrder).toBeLessThan(claimOrder);
   });
 
-  it("skips promoteInstanceAdmin when user is already an instance admin", async () => {
-    isInstanceAdminMock.mockResolvedValue(true);
+  it("returns 409 and skips auto-claim when the instance is already claimed", async () => {
+    claimFirstInstanceAdminMock.mockResolvedValue({
+      status: "already_claimed",
+      existingUserId: "someone-else",
+      value: null,
+    });
     const { db } = createDbStub();
     const app = createApp(db, "user-bootstrap-1");
 
@@ -158,9 +180,8 @@ describe("POST /invites/:token/accept — bootstrap_ceo", () => {
       .post("/api/invites/pcp_bootstrap_test/accept")
       .send({ requestType: "human" });
 
-    expect(res.status).toBe(202);
-    expect(promoteInstanceAdminMock).not.toHaveBeenCalled();
-    expect(autoClaimBoardIfPendingMock).toHaveBeenCalledWith(db, "user-bootstrap-1");
+    expect(res.status).toBe(409);
+    expect(autoClaimBoardIfPendingMock).not.toHaveBeenCalled();
   });
 
   it("still returns 202 when no pending board claim exists", async () => {
