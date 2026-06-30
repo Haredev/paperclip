@@ -115,6 +115,23 @@ function makePublishablePackageJson(original, paperclipName) {
   if (next.optionalDependencies) next.optionalDependencies = rewriteDeps(next.optionalDependencies);
   if (next.peerDependencies) next.peerDependencies = rewriteDeps(next.peerDependencies);
   delete next.devDependencies;
+
+  // Some upstream packages (e.g. hermes) ship prepack/postpack hooks that run
+  // their own publish prep (prepare-publish-package.mjs / restore-dev-package.mjs).
+  // Those re-resolve workspace deps to @paperclipai/* names instead of this
+  // fork's @haredev/* aliases and require a publishConfig.exports we've already
+  // flattened — so they fight this script. Drop only those hooks; keep unrelated
+  // ones such as the server's `prepare:ui-dist` prepack.
+  if (next.scripts && typeof next.scripts === "object") {
+    const scripts = { ...next.scripts };
+    for (const hook of ["prepack", "postpack", "prepare", "prepublish", "prepublishOnly"]) {
+      const cmd = scripts[hook];
+      if (typeof cmd === "string" && /prepare-publish-package|restore-dev-package/.test(cmd)) {
+        delete scripts[hook];
+      }
+    }
+    next.scripts = scripts;
+  }
   return next;
 }
 
