@@ -26,6 +26,7 @@ import { PageSkeleton } from "../components/PageSkeleton";
 import { QueryErrorState, useQueryView } from "../components/QueryView";
 import { PageTabBar } from "../components/PageTabBar";
 import { ProjectWorkspacesContent } from "../components/ProjectWorkspacesContent";
+import { ProjectFilesContent } from "../components/ProjectFilesContent"; // Fork (Haredev)
 import { SummarySlotCard } from "../components/SummarySlotCard";
 import { MembershipAction } from "../components/MembershipAction";
 import { StarToggle } from "../components/StarToggle";
@@ -51,7 +52,7 @@ import { useUpdateIssueMutation } from "../hooks/useUpdateIssueMutation";
 
 /* ── Top-level tab types ── */
 
-type ProjectBaseTab = "list" | "plugin-operations" | "workspaces" | "configuration" | "budget";
+type ProjectBaseTab = "list" | "plugin-operations" | "workspaces" | "files" | "configuration" | "budget";
 type ProjectPluginTab = `plugin:${string}`;
 type ProjectTab = ProjectBaseTab | ProjectPluginTab;
 
@@ -70,6 +71,7 @@ function resolveProjectTab(pathname: string, projectId: string): ProjectTab | nu
   if (tab === "issues") return "list";
   if (tab === "plugin-operations") return "plugin-operations";
   if (tab === "workspaces") return "workspaces";
+  if (tab === "files") return "files";
   return null;
 }
 
@@ -544,6 +546,10 @@ export function ProjectDetail() {
       navigate(`/projects/${canonicalProjectRef}/workspaces`, { replace: true });
       return;
     }
+    if (activeTab === "files") {
+      navigate(`/projects/${canonicalProjectRef}/files`, { replace: true });
+      return;
+    }
     if (activeTab === "list") {
       if (filter) {
         navigate(`/projects/${canonicalProjectRef}/issues/${filter}`, { replace: true });
@@ -698,6 +704,9 @@ export function ProjectDetail() {
     if (cachedTab === "workspaces" && !workspaceTabDecisionLoaded) {
       return <PageSkeleton variant="detail" />;
     }
+    if (cachedTab === "files") {
+      return <Navigate to={`/projects/${canonicalProjectRef}/files`} replace />;
+    }
     if (isProjectPluginTab(cachedTab)) {
       return <Navigate to={`/projects/${canonicalProjectRef}?tab=${encodeURIComponent(cachedTab)}`} replace />;
     }
@@ -736,6 +745,8 @@ export function ProjectDetail() {
       navigate(`/projects/${canonicalProjectRef}/plugin-operations`);
     } else if (tab === "configuration") {
       navigate(`/projects/${canonicalProjectRef}/configuration`);
+    } else if (tab === "files") {
+      navigate(`/projects/${canonicalProjectRef}/files`);
     } else {
       navigate(`/projects/${canonicalProjectRef}/issues`);
     }
@@ -868,6 +879,7 @@ export function ProjectDetail() {
 
             ...(project.managedByPlugin ? [{ value: "plugin-operations", label: "Plugin operations" }] : []),
             ...(showWorkspacesTab ? [{ value: "workspaces", label: "Workspaces" }] : []),
+            { value: "files", label: "Files" },
             { value: "configuration", label: "Configuration" },
             { value: "budget", label: "Budget" },
             ...pluginTabItems.map((item) => ({
@@ -916,6 +928,10 @@ export function ProjectDetail() {
           <p className="text-sm text-muted-foreground">Loading workspaces...</p>
         )
       ) : null}
+
+      {activeTab === "files" && project?.id && (
+        <ProjectFilesContent projectId={project.id} companyId={resolvedCompanyId ?? undefined} />
+      )}
 
       {activeTab === "configuration" && (
         <div className="max-w-4xl">

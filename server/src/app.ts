@@ -118,6 +118,7 @@ import {
 import { environmentService } from "./services/environments.js";
 import { environmentRuntimeService } from "./services/environment-runtime.js";
 import { projectRoutes } from "./routes/projects.js";
+import { projectFileRoutes } from "./routes/project-files.js"; // Fork (Haredev)
 import { issueRoutes } from "./routes/issues.js";
 import { issueTreeControlRoutes } from "./routes/issue-tree-control.js";
 import { caseRoutes } from "./routes/cases.js";
@@ -797,6 +798,7 @@ export async function createApp(
   api.use(projectToolRoutes(db));
   api.use(taskWorkspaceRoutes(db));
   api.use(projectRoutes(db));
+  api.use(projectFileRoutes(db)); // Fork (Haredev): project Files tab
   api.use(caseRoutes(db, opts.storageService));
   api.use(caseHandoffRoutes(db));
   api.use(workflowRoutes(db));
