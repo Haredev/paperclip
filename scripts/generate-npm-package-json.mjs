@@ -10,6 +10,11 @@
  *
  * Reads from cli/package.dev.json if it exists (build already ran),
  * otherwise from cli/package.json.
+ *
+ * Fork (Haredev): optional PAPERCLIP_SERVER_NPM_SPECIFIER — when set (in the
+ * fork's GitHub Packages workflow), overrides the @paperclipai/server
+ * dependency so installs resolve the fork-published tarball via npm alias,
+ * e.g. npm:@haredev/paperclip-server@2026.1117.0-sha.abcdef12
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -83,6 +88,11 @@ if (bundledCliNpmDependencies.has("embedded-postgres")) {
     readFileSync(resolve(embeddedPostgresRoot, "..", "package.json"), "utf8"),
   );
   Object.assign(allOptionalDeps, embeddedPostgresPackage.optionalDependencies ?? {});
+}
+
+const serverSpecifier = process.env.PAPERCLIP_SERVER_NPM_SPECIFIER?.trim();
+if (serverSpecifier) {
+  allDeps["@paperclipai/server"] = serverSpecifier;
 }
 
 // Sort alphabetically
