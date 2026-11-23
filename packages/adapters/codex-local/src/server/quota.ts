@@ -306,6 +306,7 @@ export async function fetchCodexQuota(
   if (rateLimit?.primary_window != null) {
     const w = rateLimit.primary_window;
     windows.push({
+      key: "five_hour",
       label: "5h limit",
       usedPercent: normalizeCodexUsedPercent(w.used_percent),
       resetsAt:
@@ -319,6 +320,7 @@ export async function fetchCodexQuota(
   if (rateLimit?.secondary_window != null) {
     const w = rateLimit.secondary_window;
     windows.push({
+      key: "seven_day",
       label: "Weekly limit",
       usedPercent: normalizeCodexUsedPercent(w.used_percent),
       resetsAt:
@@ -333,6 +335,7 @@ export async function fetchCodexQuota(
     const balance = body.credits.balance;
     const valueLabel = balance != null ? `$${(balance / 100).toFixed(2)} remaining` : "N/A";
     windows.push({
+      key: "credits",
       label: "Credits",
       usedPercent: null,
       resetsAt: null,
@@ -389,9 +392,14 @@ function unixSecondsToIso(value: number | null | undefined): string | null {
   return new Date(value * 1000).toISOString();
 }
 
-function buildCodexRpcWindow(label: string, window: CodexRpcWindow | null | undefined): QuotaWindow | null {
+function buildCodexRpcWindow(
+  label: string,
+  window: CodexRpcWindow | null | undefined,
+  key: string | null = null,
+): QuotaWindow | null {
   if (!window) return null;
   return {
+    key,
     label,
     usedPercent: normalizeCodexUsedPercent(window.usedPercent),
     resetsAt: unixSecondsToIso(window.resetsAt),
@@ -437,12 +445,15 @@ export function mapCodexRpcQuota(result: CodexRpcRateLimitsResult, account?: Cod
       limitId === "codex"
         ? ""
         : `${limit.limitName ?? limitId} · `;
-    const primary = buildCodexRpcWindow(`${prefix}5h limit`, limit.primary);
+    // Only the root Codex limit maps onto the stable five_hour / seven_day keys;
+    // per-model limits keep a null key so budget gates never read them by mistake.
+    const primary = buildCodexRpcWindow(`${prefix}5h limit`, limit.primary, limitId === "codex" ? "five_hour" : null);
     if (primary) windows.push(primary);
-    const secondary = buildCodexRpcWindow(`${prefix}Weekly limit`, limit.secondary);
+    const secondary = buildCodexRpcWindow(`${prefix}Weekly limit`, limit.secondary, limitId === "codex" ? "seven_day" : null);
     if (secondary) windows.push(secondary);
     if (limitId === "codex" && limit.credits && limit.credits.unlimited !== true) {
       windows.push({
+        key: "credits",
         label: "Credits",
         usedPercent: null,
         resetsAt: null,

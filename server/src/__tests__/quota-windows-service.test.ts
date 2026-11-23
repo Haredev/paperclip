@@ -27,7 +27,7 @@ describe("fetchAllQuotaWindows", () => {
           provider: "openai",
           source: "codex-rpc",
           ok: true,
-          windows: [{ label: "5h limit", usedPercent: 2, resetsAt: null, valueLabel: null, detail: null }],
+          windows: [{ key: "five_hour", label: "5h limit", usedPercent: 2, resetsAt: null, valueLabel: null, detail: null }],
         }),
       },
       {
@@ -45,7 +45,7 @@ describe("fetchAllQuotaWindows", () => {
         provider: "openai",
         source: "codex-rpc",
         ok: true,
-        windows: [{ label: "5h limit", usedPercent: 2, resetsAt: null, valueLabel: null, detail: null }],
+        windows: [{ key: "five_hour", label: "5h limit", usedPercent: 2, resetsAt: null, valueLabel: null, detail: null }],
       },
       {
         provider: "anthropic",

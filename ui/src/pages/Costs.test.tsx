@@ -150,6 +150,9 @@ describe("Shared Costs surfaces", () => {
 
   it("renders a focused Budgets section without duplicate Costs chrome or spend queries", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    // The subscription usage limits section seeds its cards from the provider
+    // quota snapshot, so that one read is expected; spend queries still are not.
+    costsApiMocks.quotaWindows.mockResolvedValue([]);
     root = createRoot(container);
     await act(async () => {
       root.render(
@@ -169,7 +172,11 @@ describe("Shared Costs surfaces", () => {
     expect(container.textContent).not.toContain("Inference spend");
     expect(container.querySelector('[role="tab"]')).toBeFalsy();
     expect(setBreadcrumbsMock).not.toHaveBeenCalled();
-    for (const mock of Object.values(costsApiMocks)) expect(mock).not.toHaveBeenCalled();
+    expect(costsApiMocks.quotaWindows).toHaveBeenCalledWith("company-1");
+    for (const [name, mock] of Object.entries(costsApiMocks)) {
+      if (name === "quotaWindows") continue;
+      expect(mock).not.toHaveBeenCalled();
+    }
   });
 
   it.each(surfaces)("shows unknown billing separately from complete prices only on the %s Overview", async (_name, props) => {

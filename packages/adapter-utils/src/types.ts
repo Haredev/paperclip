@@ -424,6 +424,12 @@ export interface HireApprovedHookResult {
 
 /** a single rate-limit or usage window returned by a provider quota API */
 export interface QuotaWindow {
+  /**
+   * stable machine key for the window, independent of the display label.
+   * Known keys: "five_hour", "seven_day", "seven_day_sonnet", "seven_day_opus",
+   * "extra_usage", "credits". Null or omitted when the window has no known key.
+   */
+  key?: string | null;
   /** human label, e.g. "5h", "7d", "Sonnet 7d", "Credits" */
   label: string;
   /** percent of the window already consumed (0-100), null when not reported */
@@ -448,6 +454,12 @@ export interface ProviderQuotaResult {
   errorFamily?: AdapterExecutionErrorFamily | null;
   /** error message when ok is false */
   error?: string;
+  /**
+   * True when the provider throttled the usage read (HTTP 429). The usage
+   * endpoint itself is healthy, so the reader may retry after a short delay,
+   * and no fallback that reads the same endpoint should run.
+   */
+  rateLimited?: boolean;
   windows: QuotaWindow[];
 }
 

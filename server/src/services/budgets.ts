@@ -23,18 +23,20 @@ import {
   heartbeatRuns,
   projects,
 } from "@paperclipai/db";
-import type {
-  BudgetIncident,
-  BudgetIncidentResolutionInput,
-  BudgetMetric,
-  BudgetOverview,
-  PauseReason,
-  BudgetPolicy,
-  BudgetPolicySummary,
-  BudgetPolicyUpsertInput,
-  BudgetScopeType,
-  BudgetThresholdType,
-  BudgetWindowKind,
+import {
+  isSubscriptionBudgetWindowKind,
+  type BudgetIncident,
+  type BudgetIncidentResolutionInput,
+  type BudgetMetric,
+  type BudgetOverview,
+  type PauseReason,
+  type BudgetPolicy,
+  type BudgetPolicySummary,
+  type BudgetPolicyUpsertInput,
+  type BudgetScopeType,
+  type BudgetThresholdType,
+  type BudgetWindowKind,
+  type SubscriptionBudgetWindowKind,
 } from "@paperclipai/shared";
 import { HttpError, notFound, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
@@ -47,6 +49,16 @@ import { withBudgetSpan } from "./budget-tracing.js";
 import { queueBudgetEvaluation } from "./budget-evaluation-work.js";
 export { computeObservedSpend, computeObservedSpends } from "./budget-exposure.js";
 export type { BudgetExposure } from "./budget-exposure.js";
+import {
+  providerSlugForAdapterType,
+  readQuotaSnapshot as readSharedQuotaSnapshot,
+  type QuotaSnapshotReader,
+} from "./quota-windows.js";
+import {
+  isSubscriptionUsageHeld,
+  observeSubscriptionWindow,
+  type SubscriptionWindowObservation,
+} from "./subscription-window-gate.js";
 
 type ScopeRecord = {
   companyId: string;
@@ -73,7 +85,24 @@ export type BudgetServiceHooks = {
   cancelWorkForScope?: (scope: BudgetEnforcementScope) => Promise<void>;
   /** Deliver budget-resume continuations; the enforcement worker calls it after Stop delivery. */
   deliverResumeContinuations?: () => Promise<void>;
+  /** Memoized provider quota reader used to summarize `subscription_percent` policies. */
+  readQuotaSnapshot?: QuotaSnapshotReader;
 };
+
+/** Nominal lengths of the provider subscription windows, used only to render window bounds. */
+const SUBSCRIPTION_WINDOW_DURATION_MS: Record<SubscriptionBudgetWindowKind, number> = {
+  provider_session: 5 * 60 * 60 * 1000,
+  provider_week: 7 * 24 * 60 * 60 * 1000,
+};
+
+/**
+ * `billed_cents` policies pause scopes and open incidents. `subscription_percent`
+ * policies only defer dispatch through the subscription window gate; the
+ * provider window resets on its own, so there is nothing for a human to resolve.
+ */
+function isEnforcedByIncidents(policy: Pick<PolicyRow, "metric">) {
+  return policy.metric === "billed_cents";
+}
 
 function currentUtcMonthWindow(now = new Date()) {
   const year = now.getUTCFullYear();
@@ -83,11 +112,25 @@ function currentUtcMonthWindow(now = new Date()) {
   return { start, end };
 }
 
-function resolveWindow(windowKind: BudgetWindowKind, now = new Date()) {
+function resolveWindow(
+  windowKind: BudgetWindowKind,
+  now = new Date(),
+  observation: SubscriptionWindowObservation | null = null,
+) {
   if (windowKind === "lifetime") {
     return {
       start: new Date(Date.UTC(1970, 0, 1, 0, 0, 0, 0)),
       end: new Date(Date.UTC(9999, 0, 1, 0, 0, 0, 0)),
+    };
+  }
+  if (isSubscriptionBudgetWindowKind(windowKind)) {
+    // The provider owns these bounds. Without a reported reset the window is
+    // rendered as ending "now" so the summary never claims a bogus deadline.
+    const reportedEnd = observation?.resetsAt ? new Date(observation.resetsAt) : null;
+    const end = reportedEnd && !Number.isNaN(reportedEnd.getTime()) ? reportedEnd : now;
+    return {
+      start: new Date(end.getTime() - SUBSCRIPTION_WINDOW_DURATION_MS[windowKind]),
+      end,
     };
   }
   return currentUtcMonthWindow(now);
@@ -248,11 +291,15 @@ function shouldResolveSoftIncident(policy: PolicyRow, observed: ObservedSpend) {
 /** Spend reached the limit, or the operator blocks unpriced usage. Only this
  * opens a hard-stop incident, pauses a scope, or stops running work. */
 function hardStopReached(policy: PolicyRow, observed: Awaited<ReturnType<typeof computeObservedSpend>>) {
+  // Only money policies hard-stop. A subscription_percent `amount` is a
+  // percent of a provider window (PR #13379), never cents.
+  if (!isEnforcedByIncidents(policy)) return false;
   if (!policy.isActive || !policy.hardStopEnabled || policy.amount <= 0) return false;
   return compareCents(observed.totalExact, policy.amount) >= 0 || unpricedUsageBlocks(policy, observed);
 }
 
 export async function policyBlocks(db: Db, policy: PolicyRow) {
+  if (!isEnforcedByIncidents(policy)) return false;
   if (!policy.isActive || !policy.hardStopEnabled || policy.amount <= 0) return false;
   return hardStopReached(policy, await computeObservedSpend(db, policy));
 }
@@ -345,9 +392,11 @@ async function markApprovalStatus(
 /** Owner transactions read eligibility or append work. Only the fenced worker
  * and explicit policy edits evaluate and publish aggregate transitions. */
 export function budgetServiceInTransaction(db: Db, publications: ActivityPublication[] = [],
-  options: { evaluate?: boolean; now?: Date } = {}) {
+  options: { evaluate?: boolean; now?: Date; readQuotaSnapshot?: QuotaSnapshotReader } = {}) {
   const now = options.now ?? new Date();
   const recordActivity = (input: LogActivityInput) => logActivity(db, input, publications);
+  // Subscription-window budgets (PR #13379) summarize usage from the memoized quota snapshot.
+  const readQuotaSnapshot = options.readQuotaSnapshot ?? readSharedQuotaSnapshot;
   async function pauseScopeForBudget(policy: PolicyRow) {
     const now = new Date();
     if (policy.scopeType === "agent") {
@@ -483,12 +532,68 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
       .orderBy(desc(budgetPolicies.updatedAt));
   }
 
+  /**
+   * Reads the current provider window for a `subscription_percent` policy. An
+   * agent scope reads its own adapter's provider; company and project scopes
+   * span every agent, so they report the most-used provider window.
+   */
+  async function observeSubscriptionPolicy(policy: PolicyRow): Promise<SubscriptionWindowObservation | null> {
+    const windowKind = policy.windowKind;
+    if (policy.metric !== "subscription_percent" || !isSubscriptionBudgetWindowKind(windowKind)) return null;
+    const snapshot = await readQuotaSnapshot();
+    let providers: string[] | null = null;
+    if (policy.scopeType === "agent") {
+      const agent = await db
+        .select({ adapterType: agents.adapterType })
+        .from(agents)
+        .where(eq(agents.id, policy.scopeId))
+        .then((rows) => rows[0] ?? null);
+      if (!agent) return null;
+      providers = [providerSlugForAdapterType(agent.adapterType)];
+    }
+    let best: SubscriptionWindowObservation | null = null;
+    for (const result of snapshot.results) {
+      if (providers && !providers.includes(result.provider)) continue;
+      const observation = observeSubscriptionWindow(result, windowKind);
+      if (!observation) continue;
+      if (!best || (observation.usedPercent ?? -1) > (best.usedPercent ?? -1)) best = observation;
+    }
+    return best;
+  }
+
   async function buildPolicySummary(policy: PolicyRow): Promise<BudgetPolicySummary> {
     const scope = await resolveSummaryScopeRecord(db, policy.companyId, policy.scopeType as BudgetScopeType, policy.scopeId);
-    const observed = await computeObservedSpend(db, policy, now);
-    const { total: observedAmount, totalExact: observedAmountExact, unpricedEventCount, pendingRunCount } = observed;
-    const { windowStart: start, windowEnd: end } = observed;
+    const isSubscription = policy.metric === "subscription_percent";
+    // Subscription policies measure percent of a provider window, not money:
+    // they never read cost events and never reach a hard stop (PR #13379).
+    const observed = isSubscription ? null : await computeObservedSpend(db, policy, now);
+    const observation = isSubscription ? await observeSubscriptionPolicy(policy) : null;
+    // A subscription policy only knows its usage when the provider reported
+    // the window. A failed quota fetch, a missing window, or a window without
+    // utilization is "unknown" and must not be presented as a healthy 0%.
+    const usageUnavailable = isSubscription && observation?.usedPercent == null;
+    // The snapshot keeps the last successful read while a refresh fails, so
+    // the usage is real but older than usual.
+    const usageStale = isSubscription && !usageUnavailable && observation?.stale === true;
     const amount = policy.isActive ? policy.amount : 0;
+    // Whether the gate is holding new runs on this observation, by the gate's
+    // own rule, so the card never says "held" while runs are flowing or the
+    // other way round.
+    const usageHeld = isSubscription
+      ? isSubscriptionUsageHeld({
+          limitPercent: amount,
+          usedPercent: observation?.usedPercent ?? null,
+          stale: observation?.stale === true,
+          observedAt: observation?.observedAt,
+        })
+      : false;
+    const observedAmount = observed ? observed.total : observation?.usedPercent ?? 0;
+    const observedAmountExact = observed ? observed.totalExact : String(observedAmount);
+    const unpricedEventCount = observed?.unpricedEventCount ?? 0;
+    const pendingRunCount = observed?.pendingRunCount ?? 0;
+    const { start, end } = observed
+      ? { start: observed.windowStart, end: observed.windowEnd }
+      : resolveWindow(policy.windowKind as BudgetWindowKind, now, observation);
     const utilizationPercent =
       amount > 0 ? Number(((observedAmount / amount) * 100).toFixed(2)) : 0;
     return {
@@ -508,11 +613,15 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
       unpricedUsagePolicy: policy.unpricedUsagePolicy as "block" | "allow",
       remainingAmount: amount > 0 ? Math.max(0, amount - observedAmount) : 0,
       utilizationPercent,
+      usageUnavailable,
+      usageStale,
+      usageHeld,
+      usageObservedAt: isSubscription ? observation?.observedAt ?? null : null,
       warnPercent: policy.warnPercent,
       hardStopEnabled: policy.hardStopEnabled,
       notifyEnabled: policy.notifyEnabled,
       isActive: policy.isActive,
-      status: hardStopReached(policy, observed) ? "hard_stop" : policy.isActive
+      status: observed && hardStopReached(policy, observed) ? "hard_stop" : policy.isActive && !usageUnavailable
         ? budgetStatusFromObserved(observedAmountExact, amount, policy.warnPercent)
         : "ok",
       paused: scope.paused,
@@ -932,7 +1041,9 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
           .where(eq(agents.id, input.scopeId));
       }
 
-      if (row.isActive && amount > 0) {
+      if (!isEnforcedByIncidents(row)) {
+        // Subscription window policies are enforced at dispatch time only.
+      } else if (row.isActive && amount > 0) {
         const observed = await computeObservedSpend(db, row);
         if (!hardStopReached(row, observed)) {
           await resumeScopeFromBudget(row);
@@ -1350,21 +1461,31 @@ export async function reconcileDueBudgetPolicies(db: Db, options: { startup?: bo
   return { nextCursor: rows.length === 100 ? rows[rows.length - 1].id : null, ...(hadFailures ? { hadFailures: true } : {}) };
 }
 
-export function budgetService(db: Db, _hooks: BudgetServiceHooks = {}) {
+export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
+  const readQuotaSnapshot = hooks.readQuotaSnapshot ?? readSharedQuotaSnapshot;
   const mutate = <T>(companyId: string, work: (service: ReturnType<typeof budgetServiceInTransaction>) => Promise<T>,
     scope?: { scopeType: string; scopeId: string }) => withOperationAccountingTransaction(db, companyId, async (tx, publications) => {
       const now = new Date();
       const policies = await fenceBudgetPolicies(tx, companyId, scope);
-      const result = await work(budgetServiceInTransaction(tx, publications, { evaluate: true, now }));
+      const result = await work(budgetServiceInTransaction(tx, publications, { evaluate: true, now, readQuotaSnapshot }));
       if ((policies.some(policy => policy.windowKind === "calendar_month_utc") || scope) && Date.now() >= currentUtcMonthWindow(now).end.getTime())
         throw Object.assign(new Error("Budget window changed during publication"), { code: "40001" });
       return result;
     });
   return {
-    listPolicies: (companyId: string) => withAccountingReadSnapshot(db, companyId,
-      tx => budgetServiceInTransaction(tx).listPolicies(companyId)),
-    overview: (companyId: string) => withAccountingReadSnapshot(db, companyId,
-      tx => budgetServiceInTransaction(tx).overview(companyId)),
+    // Warm the memoized quota snapshot before opening the read snapshot, so a
+    // subscription policy summary never holds a transaction open across a
+    // provider HTTP read (PR #13379).
+    listPolicies: async (companyId: string) => {
+      await readQuotaSnapshot();
+      return withAccountingReadSnapshot(db, companyId,
+        tx => budgetServiceInTransaction(tx, [], { readQuotaSnapshot }).listPolicies(companyId));
+    },
+    overview: async (companyId: string) => {
+      await readQuotaSnapshot();
+      return withAccountingReadSnapshot(db, companyId,
+        tx => budgetServiceInTransaction(tx, [], { readQuotaSnapshot }).overview(companyId));
+    },
     evaluateAdmission: (companyId: string, agentId: string | null, context?: AdmissionContext) =>
       withAccountingReadSnapshot(db, companyId, tx => budgetServiceInTransaction(tx).evaluateAdmission(companyId, agentId, context)),
     evaluateAffectedScopes: (companyId: string, agentId: string | null, projectId: string | null) =>
@@ -1372,8 +1493,10 @@ export function budgetService(db: Db, _hooks: BudgetServiceHooks = {}) {
     reconcileScope: (companyId: string, scopeType: BudgetScopeType, scopeId: string) =>
       mutate(companyId, service => service.reconcileScope(companyId, scopeType, scopeId), { scopeType, scopeId }),
     reconcilePolicies: () => reconcileDueBudgetPolicies(db, { startup: true }),
-    upsertPolicy: (companyId: string, input: BudgetPolicyUpsertInput, actorUserId: string | null) =>
-      mutate(companyId, service => service.upsertPolicy(companyId, input, actorUserId), input),
+    upsertPolicy: async (companyId: string, input: BudgetPolicyUpsertInput, actorUserId: string | null) => {
+      if (input.metric === "subscription_percent") await readQuotaSnapshot();
+      return mutate(companyId, service => service.upsertPolicy(companyId, input, actorUserId), input);
+    },
     evaluateCostEvent: (event: typeof costEvents.$inferSelect) => withOperationAccountingTransaction(db, event.companyId, tx => queueBudgetEvaluation(tx, { companyId: event.companyId, agentId: event.agentId, projectId: event.projectId })),
     getInvocationBlock: (companyId: string, agentId: string | null, context?: AdmissionContext) =>
       withBudgetSpan("budget.admission.inspect", () => withAccountingReadSnapshot(db, companyId,

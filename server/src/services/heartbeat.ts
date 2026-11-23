@@ -1,4 +1,5 @@
 import { registerHeldPreparationResumer } from "./interrupted-preparation-hold-settlement.js";
+import { subscriptionWindowGateService } from "./subscription-window-gate.js";
 import { resolveProviderApiPlacement } from "./native-runtime/provider-api-placement.js";
 import { isProcessRunAdmissionClosed } from "./heartbeat/run-admission.js";
 import type { StopInvocationOptions } from "./heartbeat/run-control.js";
@@ -783,6 +784,8 @@ export type HeartbeatEnvironmentRuntime = ReturnType<
 export interface HeartbeatServiceOptions {
   /** Test seam before the atomic native runtime handoff. */
   beforeNativeRuntimeSelection?: (runId: string) => Promise<void>;
+  /** Subscription window gate override (tests inject a fixed quota snapshot). */
+  subscriptionWindowGate?: Pick<ReturnType<typeof subscriptionWindowGateService>, "evaluate">;
   /** Test seam immediately before the durable chat-control admission check. */
   beforeChatControlRecoveryCheck?: (input: {
     runId: string;
@@ -1001,6 +1004,8 @@ export function heartbeatService(
     if (failed?.status === "rejected") throw failed.reason;
   });
   const budgets = budgetService(db, budgetHooks);
+  const subscriptionWindowGate =
+    options.subscriptionWindowGate ?? subscriptionWindowGateService(db);
   const recovery = recoveryService(db, {
     enqueueWakeup,
     liveRunExecutions,
@@ -1292,6 +1297,7 @@ export function heartbeatService(
   });
 
   const heartbeatQueue = createHeartbeatQueue(db, {
+    subscriptionWindowGate,
     canStartNewExternalBotWork: async agent => {
       if (agent.adapterType !== "paperclip_runner" || agent.adapterConfig.provider !== "grok_bot") return true;
       const aiConnection = aiRuntimeConnectionBindingSchema.safeParse(agent.runtimeConfig?.aiConnection);
