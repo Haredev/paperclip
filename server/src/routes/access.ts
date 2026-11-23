@@ -103,7 +103,9 @@ import {
 } from "../lib/join-request-dedupe.js";
 import { assertAuthenticated, assertCompanyAccess } from "./authz.js";
 import {
+  autoClaimBoardIfPending,
   claimBoardOwnership,
+  hasPendingBoardClaim,
   inspectBoardClaimChallenge
 } from "../board-claim.js";
 import { claimFirstInstanceAdmin } from "../first-admin-claim.js";
@@ -3651,26 +3653,48 @@ export function accessRoutes(
           );
         }
         const userId = req.actor.userId ?? "local-board";
+        const markBootstrapInviteAccepted = async (
+          tx: Pick<typeof db, "update">
+        ) => {
+          const updatedInvite = await tx
+            .update(invites)
+            .set({ acceptedAt: new Date(), updatedAt: new Date() })
+            .where(
+              and(
+                eq(invites.id, invite.id),
+                isNull(invites.acceptedAt),
+                isNull(invites.revokedAt)
+              )
+            )
+            .returning()
+            .then((rows) => rows[0] ?? null);
+          if (!updatedInvite) {
+            throw conflict("Bootstrap invite is no longer available");
+          }
+          return updatedInvite;
+        };
+        // Fork (Haredev): while the instance is still owned only by the
+        // implicit local-board admin, a board-claim challenge is pending and
+        // claimFirstInstanceAdmin would answer 409. Apply the board claim
+        // instead (instance admin + owner on every company), so the user never
+        // has to visit the separate /board-claim URL.
+        if (
+          req.actor.userId &&
+          hasPendingBoardClaim() &&
+          (await autoClaimBoardIfPending(db, req.actor.userId))
+        ) {
+          const updatedInvite = await markBootstrapInviteAccepted(db);
+          res.status(202).json({
+            inviteId: updatedInvite.id,
+            inviteType: updatedInvite.inviteType,
+            bootstrapAccepted: true,
+            userId
+          });
+          return;
+        }
         const claimed = await claimFirstInstanceAdmin(db, {
           userId,
-          onClaim: async (tx) => {
-            const updatedInvite = await tx
-              .update(invites)
-              .set({ acceptedAt: new Date(), updatedAt: new Date() })
-              .where(
-                and(
-                  eq(invites.id, invite.id),
-                  isNull(invites.acceptedAt),
-                  isNull(invites.revokedAt)
-                )
-              )
-              .returning()
-              .then((rows) => rows[0] ?? null);
-            if (!updatedInvite) {
-              throw conflict("Bootstrap invite is no longer available");
-            }
-            return updatedInvite;
-          },
+          onClaim: markBootstrapInviteAccepted,
         });
         if (claimed.status === "already_claimed") {
           throw conflict("Someone else has already claimed this instance");

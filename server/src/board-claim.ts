@@ -165,3 +165,32 @@ export async function claimBoardOwnership(
 
   return { status: "claimed", claimedByUserId: opts.userId };
 }
+
+// ---------------------------------------------------------------------------
+// Fork (Haredev): bootstrap-ceo invites auto-apply a pending board claim.
+// ---------------------------------------------------------------------------
+
+/**
+ * True while a board-claim challenge is pending, i.e. the instance is still
+ * owned only by the implicit `local-board` admin.
+ */
+export function hasPendingBoardClaim(): boolean {
+  return Boolean(
+    activeChallenge && !activeChallenge.claimedAt && activeChallenge.expiresAt.getTime() > Date.now(),
+  );
+}
+
+/**
+ * Process the pending board claim (if any) for `userId`: promote them to
+ * instance admin, remove `local-board`, and grant owner memberships on every
+ * company. Returns true when the claim was applied.
+ */
+export async function autoClaimBoardIfPending(db: Db, userId: string): Promise<boolean> {
+  if (!activeChallenge || !hasPendingBoardClaim()) return false;
+  const result = await claimBoardOwnership(db, {
+    token: activeChallenge.token,
+    code: activeChallenge.code,
+    userId,
+  });
+  return result.status === "claimed";
+}
